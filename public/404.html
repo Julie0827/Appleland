@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <link rel="icon" href="/favicon.ico" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Coming+Soon&display=swap"
+      rel="stylesheet"
+    />
+
+    <title>404 - Appleland</title>
+
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        cursor:
+          url('/assets/ui/cursor-dark.png') 32 32,
+          auto;
+      }
+
+      body {
+        min-height: 100vh;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 90px;
+        background: #fdfcf8;
+        user-select: none;
+      }
+
+      .text {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 50px;
+        font-family: 'Coming Soon', cursive;
+        letter-spacing: 0.05em;
+        word-spacing: 0.1em;
+      }
+
+      h1 {
+        color: #355c3a;
+        font-size: 10rem;
+      }
+
+      p {
+        color: #4a6741;
+        font-size: 1.3rem;
+        white-space: nowrap;
+      }
+
+      a {
+        padding: 20px 40px;
+        border-radius: 15px;
+        background: #7fb069;
+        color: #fdfcf8;
+        font-size: 1.1rem;
+        text-decoration: none;
+      }
+
+      a:hover {
+        scale: 1.05;
+      }
+
+      a:active {
+        scale: 1;
+      }
+
+      img {
+        width: 20vw;
+        min-width: 280px;
+        max-width: 400px;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="text">
+      <h1>404</h1>
+      <p>You wandered too far from Appleland.</p>
+      <a href="/">Return to Appleland</a>
+    </div>
+
+    <img src="/assets/ui/404.webp" alt="404" draggable="false" />
+  </body>
+</html>
