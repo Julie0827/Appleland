@@ -3214,23 +3214,27 @@ function expandColliders(expandedCollision, colliders) {
 // ----------------------------------------------------------------------------------------------------
 // Interactable types
 // ----------------------------------------------------------------------------------------------------
-function getSeatAnchorData(anchorObj) {
+function extractSeatAnchorData(anchorObj) {
   anchorObj.getWorldPosition(tmpVec3)
   anchorObj.getWorldQuaternion(tmpQuat)
+
+  anchorObj.removeFromParent()
 
   const pos = tmpVec3.clone()
   const quat = tmpQuat.clone()
 
   tmpVec3.set(0, 0, 1).applyQuaternion(quat)
 
-  const facingAxis = Math.abs(tmpVec3.x) > Math.abs(tmpVec3.z) ? 'x' : 'z'
-  const rightDir = facingAxis === 'x' ? [0, 0, Math.sign(tmpVec3.x)] : [-Math.sign(tmpVec3.z), 0, 0]
+  const { x, z } = tmpVec3
+
+  const facingAxis = Math.abs(x) > Math.abs(z) ? 'x' : 'z'
+  const rightDir = facingAxis === 'x' ? [0, 0, Math.sign(x)] : [-Math.sign(z), 0, 0]
 
   return { pos, quat, facingAxis, rightDir }
 }
 
 function initSeatInteractable(interactable, instance, anchor, sitOnFloor = false) {
-  const { pos, quat, facingAxis, rightDir } = getSeatAnchorData(
+  const { pos, quat, facingAxis, rightDir } = extractSeatAnchorData(
     instance.getObjectByName(anchor.name),
   )
 
@@ -3247,7 +3251,7 @@ function initMultiSeatInteractable(interactable, instance, anchors) {
   const seats = []
 
   for (const anchor of anchors) {
-    seats.push(getSeatAnchorData(instance.getObjectByName(anchor.name)))
+    seats.push(extractSeatAnchorData(instance.getObjectByName(anchor.name)))
   }
 
   interactable.seats = seats
@@ -4292,8 +4296,7 @@ function mergeMeshesByGroup() {
 
       const key = matType === MAT_TYPE.VERTEX ? groupKey : `${groupKey}_${mat.uuid}`
 
-      if (!groups[key]) groups[key] = { nodes: [], mat }
-
+      groups[key] ??= { nodes: [], mat }
       groups[key].nodes.push(node)
     })
   }
@@ -4331,7 +4334,16 @@ function mergeMeshesByGroup() {
     }
 
     for (const node of nodes) {
-      node.parent.remove(node)
+      let parent = node.parent
+
+      parent.remove(node)
+
+      while (parent.children.length === 0) {
+        const grandparent = parent.parent
+
+        grandparent.remove(parent)
+        parent = grandparent
+      }
     }
   }
 }
