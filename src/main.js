@@ -6725,7 +6725,7 @@ const butterflyTangent = new THREE.Vector3()
 
 function updateButterflies(dt, t) {
   for (const inst of BUTTERFLY_INSTANCES) {
-    const { name, path, group, butterfly } = inst
+    const { path, group, butterfly } = inst
 
     const pathT = (inst.t + dt * BUTTERFLY_PATH_SPEED) % 1
     inst.t = pathT
@@ -7003,7 +7003,7 @@ function resolveCameraBlockers(rayDirX, rayDirZ) {
 // ----------------------------------------------------------------------------------------------------
 let camYDampingDisabled = false
 
-function updateCamera(dt, a) {
+function updateCamera(a) {
   if (binocularsActive) return
 
   const { x, y, z } = player.position
@@ -7093,7 +7093,7 @@ function animate(now) {
   updateTrashBins(dt)
 
   updateLights()
-  updateCamera(dt, a)
+  updateCamera(a)
 
   renderer.render(scene, camera)
 
