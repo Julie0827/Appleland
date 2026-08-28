@@ -56,6 +56,7 @@ const f1 = (n) => n.toFixed(1)
 const f2 = (n) => n.toFixed(2)
 const roundTo = (val) => Math.round(val * ROUND_FACTOR) / ROUND_FACTOR
 const f32Arr = (len) => new Float32Array(len)
+const instAttr = (arr, sz = 1) => new THREE.InstancedBufferAttribute(arr, sz)
 const toArr = (val) => (Array.isArray(val) ? val : [val])
 const toNestedArr = (val) => (Array.isArray(val[0]) ? val : [val])
 const isWhite = (r, g, b) => r > 0.9 && g > 0.9 && b > 0.9
@@ -90,6 +91,7 @@ const S1 = [1, 1, 1]
 const tmpVec3 = new THREE.Vector3()
 const tmpQuat = new THREE.Quaternion()
 const tmpEuler = new THREE.Euler(0, 0, 0, 'YXZ')
+const tmpObj3D = new THREE.Object3D()
 const tmpBox3 = new THREE.Box3()
 
 // Timing
@@ -2319,17 +2321,9 @@ function processInteractablePart(
 }
 
 function extractLayout(layout, node) {
-  const { position, quaternion, scale } = node
-  const { maxY, cX, cZ } = getLocalBoundingBoxData(node)
+  const { position, quaternion } = node
 
-  layout.push({
-    position: position.clone(),
-    quaternion: quaternion.clone(),
-    scale: scale.clone(),
-    maxY,
-    cX,
-    cZ,
-  })
+  layout.push({ pos: position.clone(), quat: quaternion.clone() })
 }
 
 function cleanAlpha(mat) {
@@ -3868,7 +3862,11 @@ function resolvePlantPlacements() {
   }
 }
 
-function populateCluster(instances, inst, center, color, cluster) {
+function populateCluster(instances, inst) {
+  const { pos: center, color, cluster } = inst
+
+  if (!cluster) return
+
   const { c = DEFAULT_CLUSTER_SIZE, r = DEFAULT_CLUSTER_RADII[c], a: baseAngle = 0 } = cluster
 
   if (!c || !r) return
@@ -3895,18 +3893,13 @@ function populateCluster(instances, inst, center, color, cluster) {
 }
 
 function resolvePlantClusters() {
-  for (const { instances, color } of Object.values(PLANT_MODELS_CONFIG)) {
+  for (const { instances } of Object.values(PLANT_MODELS_CONFIG)) {
     if (!instances) continue
 
     const countCopy = instances.length
 
     for (let i = 0; i < countCopy; i++) {
-      const inst = instances[i]
-      const { pos, color, cluster } = inst
-
-      if (!cluster) continue
-
-      populateCluster(instances, inst, pos, color, cluster)
+      populateCluster(instances, instances[i])
     }
   }
 }
@@ -3914,8 +3907,9 @@ function resolvePlantClusters() {
 // ----------------------------------------------------------------------------------------------------
 // Effects
 // ----------------------------------------------------------------------------------------------------
-function addVertexSway(material) {
+function addVertexSway(material, recolor = false) {
   material.vertexColors = true
+  material.customProgramCacheKey = () => (recolor ? 'sway-recolor' : 'sway')
 
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = EFFECTS_TIME
@@ -3924,14 +3918,13 @@ function addVertexSway(material) {
       `
       uniform float uTime;
       attribute float instRand;
-      attribute vec3 instColor;
-      varying vec3 vInstColor;
+      ${recolor ? 'attribute vec3 instColor; varying vec3 vInstColor;' : ''}
       ` + shader.vertexShader
 
     shader.vertexShader = shader.vertexShader.replace(
       '#include <begin_vertex>',
       `
-      vInstColor = instColor;
+      ${recolor ? 'vInstColor = instColor;' : ''}
 
       float base = uTime * ${f2(SWAY_SPEED)};
       float offset = instRand * ${f2(SWAY_OFFSET_SCALE)};
@@ -3947,22 +3940,22 @@ function addVertexSway(material) {
       `,
     )
 
-    shader.fragmentShader = `varying vec3 vInstColor;\n` + shader.fragmentShader
+    if (!recolor) return
+
+    shader.fragmentShader = 'varying vec3 vInstColor;\n' + shader.fragmentShader
 
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <color_fragment>',
       `
       #include <color_fragment>
 
-      #ifndef DEPTH_PACKING
-        float minChannel = min(
-          diffuseColor.r,
-          min(diffuseColor.g, diffuseColor.b)
-        );
+      float minChannel = min(
+        diffuseColor.r,
+        min(diffuseColor.g, diffuseColor.b)
+      );
 
-        float isWhite = smoothstep(0.9, 0.95, minChannel);
-        diffuseColor.rgb = mix(diffuseColor.rgb, vInstColor, isWhite);
-      #endif
+      float isWhite = smoothstep(0.9, 0.95, minChannel);
+      diffuseColor.rgb = mix(diffuseColor.rgb, vInstColor, isWhite);
       `,
     )
   }
@@ -3976,19 +3969,11 @@ function addVertexLeafSway(material) {
       `
       uniform float uTime;
       attribute float leafRand;
-      attribute float maxY;
-      attribute float cX;
-      attribute float cZ;
     ` + shader.vertexShader
 
     shader.vertexShader = shader.vertexShader.replace(
       '#include <begin_vertex>',
       `
-      vec3 transformed = position;
-      vec3 pivot = vec3(cX, maxY, cZ);
-
-      transformed -= pivot;
-
       float base = uTime * ${f2(LEAF_SWAY_SPEED)};
       float offset = leafRand * ${f2(LEAF_SWAY_OFFSET_SCALE)};
       float angle = sin(base + offset) * ${f2(LEAF_SWAY_AMP)};
@@ -3996,19 +3981,16 @@ function addVertexLeafSway(material) {
       float cosA = cos(angle);
       float sinA = sin(angle);
 
-      float newX = transformed.x * cosA - transformed.y * sinA;
-      float newY = transformed.y * cosA + transformed.x * sinA;
+      float newX = position.x * cosA - position.y * sinA;
+      float newY = position.y * cosA + position.x * sinA;
 
-      transformed.x = newX;
-      transformed.y = newY;
-
-      transformed += pivot;
+      vec3 transformed = vec3(newX, newY, position.z);
       `,
     )
   }
 }
 
-function enableEffect(mesh, effect, syncShadows) {
+function enableEffect(mesh, effect, syncShadows, isFlower = false) {
   const mat = mesh.material
   let customDepthMaterial = null
 
@@ -4021,7 +4003,7 @@ function enableEffect(mesh, effect, syncShadows) {
 
   switch (effect) {
     case EFFECTS.SWAY:
-      addVertexSway(mat)
+      addVertexSway(mat, isFlower)
       if (syncShadows) addVertexSway(customDepthMaterial)
       break
 
@@ -4061,27 +4043,28 @@ function createInstancedPlants(name, config) {
   const count = instances.length
   const instancedMesh = new THREE.InstancedMesh(geometry, material, count)
 
-  enableEffect(instancedMesh, EFFECTS.SWAY, syncShadows)
+  const isFlower = name.startsWith('flower')
 
-  const transform = new THREE.Object3D()
+  enableEffect(instancedMesh, EFFECTS.SWAY, syncShadows, isFlower)
+
   const instRands = f32Arr(count)
   const colorsRGB = f32Arr(count * 3)
-  const angles = name.includes('grass')
-    ? [0, PI]
-    : [0, 30, -30, 60, -60, 180].map(THREE.MathUtils.degToRad)
+
+  const angles = isFlower ? [0, TAU_DIV_12, -TAU_DIV_12, TAU_DIV_6, -TAU_DIV_6, PI] : [0, PI]
   const angleCount = angles.length
 
   for (let i = 0; i < count; i++) {
     const randomAngle = angles[Math.floor(Math.random() * angleCount)]
     const { pos = P0, rotY = 0, scale = S1, color } = instances[i]
 
-    transform.position.set(...pos)
-    transform.rotation.set(0, rotY + randomAngle, 0)
-    transform.scale.set(...scale)
-    transform.updateMatrix()
-    instancedMesh.setMatrixAt(i, transform.matrix)
+    tmpObj3D.position.set(...pos)
+    tmpObj3D.rotation.set(0, rotY + randomAngle, 0)
+    tmpObj3D.scale.set(...scale)
+    tmpObj3D.updateMatrix()
 
-    instRands[i] = Math.random() * 10.0
+    instancedMesh.setMatrixAt(i, tmpObj3D.matrix)
+
+    instRands[i] = Math.random() * 10
     writeColorRGB(colorsRGB, color, i)
   }
 
@@ -4090,8 +4073,8 @@ function createInstancedPlants(name, config) {
   instancedMesh.receiveShadow = receiveShadow
 
   instancedMesh.geometry
-    .setAttribute('instRand', new THREE.InstancedBufferAttribute(instRands, 1))
-    .setAttribute('instColor', new THREE.InstancedBufferAttribute(colorsRGB, 3))
+    .setAttribute('instRand', instAttr(instRands))
+    .setAttribute('instColor', instAttr(colorsRGB, 3))
 
   scene.add(instancedMesh)
 }
@@ -4104,25 +4087,23 @@ function getTreeParts(model) {
   let leaf = null
   let apple = null
 
-  model.traverse((node) => {
-    if (!node.isMesh) return
-
-    const [category] = getNameParts(node.name)
+  for (const child of model.children) {
+    const [category] = getNameParts(child.name)
 
     switch (category) {
       case 'trunk':
-        trunk = node
+        trunk = child
         break
 
       case 'leafTemplate':
-        leaf = node
+        leaf = child
         break
 
       case 'appleTemplate':
-        apple = node
+        apple = child
         break
     }
-  })
+  }
 
   return { trunk, leaf, apple }
 }
@@ -4136,95 +4117,74 @@ function initInstancedTrunkData(trunk, instCount) {
   const baseHeight = max.y - min.y
 
   const instancedMesh = new THREE.InstancedMesh(geometry, material, instCount)
-
-  const transform = new THREE.Object3D()
   const rigidTransform = new THREE.Object3D()
 
-  return { instancedMesh, transform, rigidTransform, baseHeight }
+  return { instancedMesh, rigidTransform, baseHeight }
 }
 
 function initInstancedLeafData(leaf, layout, instCount) {
   const { geometry, material } = leaf
 
-  const count = layout.length
-  const totalCount = instCount * count
-
+  const totalCount = instCount * layout.length
   const instancedMesh = new THREE.InstancedMesh(geometry, material, totalCount)
 
   enableEffect(instancedMesh, EFFECTS.LEAF_SWAY, false)
 
-  const transform = new THREE.Object3D()
-
-  return {
-    instancedMesh,
-    transform,
-    rands: f32Arr(totalCount),
-    maxYs: f32Arr(totalCount),
-    cXs: f32Arr(totalCount),
-    cZs: f32Arr(totalCount),
-  }
+  return { instancedMesh, rands: f32Arr(totalCount) }
 }
 
-function setInstancedTrunkData(instances, instIndex, data, colliders) {
-  const { pos = P0, rotY = 0, scale = S1 } = instances[instIndex]
-  const { instancedMesh, transform, rigidTransform, baseHeight } = data
+function setInstancedTrunkData(instances, instIdx, data, colliders) {
+  const { pos = P0, rotY = 0, scale = S1 } = instances[instIdx]
+  const { instancedMesh, rigidTransform, baseHeight } = data
 
   data.extraHeight = baseHeight * (scale[1] - 1)
 
-  transform.position.set(...pos)
-  transform.rotation.set(0, rotY, 0)
-  transform.scale.set(...scale)
-  transform.updateMatrix()
-  instancedMesh.setMatrixAt(instIndex, transform.matrix)
+  tmpObj3D.position.set(...pos)
+  tmpObj3D.rotation.set(0, rotY, 0)
+  tmpObj3D.scale.set(...scale)
+  tmpObj3D.updateMatrix()
 
-  rigidTransform.copy(transform)
+  instancedMesh.setMatrixAt(instIdx, tmpObj3D.matrix)
+
+  rigidTransform.copy(tmpObj3D)
   rigidTransform.scale.set(...S1)
   rigidTransform.updateMatrix()
 
   if (colliders) addBounds(colliders, worldColliders, pos, rotY, scale)
 }
 
-function populateInstancedLeafData(instIndex, data, layout, extraHeight, rigidTransform) {
-  const { instancedMesh, transform, rands, maxYs, cXs, cZs } = data
+function populateInstancedLeafData(instIdx, data, layout, extraHeight, rigidTransform) {
+  const { instancedMesh, rands } = data
   const count = layout.length
 
-  let index = instIndex * count
+  let index = instIdx * count
 
   for (let i = 0; i < count; i++) {
-    const { position, quaternion, scale, maxY, cX, cZ } = layout[i]
+    const { pos, quat } = layout[i]
 
-    transform.position.copy(position)
-    transform.position.y += extraHeight
-    transform.quaternion.copy(quaternion)
-    transform.scale.copy(scale)
-    transform.updateMatrix()
+    tmpObj3D.position.copy(pos)
+    tmpObj3D.position.y += extraHeight
+    tmpObj3D.quaternion.copy(quat)
+    tmpObj3D.updateMatrix()
 
-    transform.matrix.premultiply(rigidTransform.matrix)
-    instancedMesh.setMatrixAt(index, transform.matrix)
+    tmpObj3D.matrix.premultiply(rigidTransform.matrix)
+    instancedMesh.setMatrixAt(index, tmpObj3D.matrix)
 
-    rands[index] = Math.random() * 10.0
-    maxYs[index] = maxY
-    cXs[index] = cX
-    cZs[index] = cZ
+    rands[index] = Math.random() * 10
 
     index++
   }
 }
 
 function finalizeInstancedMesh(data, config, isLeaf = true) {
-  const { instancedMesh, rands, maxYs, cXs, cZs } = data
+  const { instancedMesh, rands } = data
+  const { castShadow = DEFAULT_CAST_SHADOW, receiveShadow = DEFAULT_RECEIVE_SHADOW } = config
 
   instancedMesh.instanceMatrix.needsUpdate = true
-  instancedMesh.castShadow = config.castShadow ?? DEFAULT_CAST_SHADOW
-  instancedMesh.receiveShadow = config.receiveShadow ?? DEFAULT_RECEIVE_SHADOW
+  instancedMesh.castShadow = castShadow
+  instancedMesh.receiveShadow = receiveShadow
 
-  if (isLeaf) {
-    instancedMesh.geometry
-      .setAttribute('leafRand', new THREE.InstancedBufferAttribute(rands, 1))
-      .setAttribute('maxY', new THREE.InstancedBufferAttribute(maxYs, 1))
-      .setAttribute('cX', new THREE.InstancedBufferAttribute(cXs, 1))
-      .setAttribute('cZ', new THREE.InstancedBufferAttribute(cZs, 1))
-  }
+  if (isLeaf) instancedMesh.geometry.setAttribute('leafRand', instAttr(rands))
 
   scene.add(instancedMesh)
 }
